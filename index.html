@@ -17,24 +17,63 @@
     #progress-container { width: 300px; background: #eee; border-radius: 5px; overflow: hidden; margin: 10px 0; }
     #progress-bar { height: 20px; width: 0%; background: #4caf50; transition: width 0.2s; }
     #progress-text { font-size: 14px; margin-top: 5px; }
+    #char-stats { font-size: 14px; margin-top: 5px; color:#555; }
+    #char-text { font-size: 14px; margin-top: 5px; color:#555; }
+    #links { margin-bottom: 20px; }
+    #links a { margin-right: 15px; color: #0066cc; text-decoration: none; }
+    #links a:hover { text-decoration: underline; }
   </style>
 </head>
 <body style="font-family:sans-serif; padding:20px;">
-  <h2>Převod skenovaného PDF na "živé" PDF</h2>
+
+  <div id="links">
+    <a href="https://www.ilovepdf.com/merge_pdf" target="_blank">Spoj PDF</a>
+    <a href="https://www.ilovepdf.com/rotate_pdf" target="_blank">Otoč PDF</a>
+    <a href="https://www.ilovepdf.com/split_pdf" target="_blank">Rozděl PDF</a>
+  </div>
+
+  <h3>Zůstaňte na této stránce, její přepnutí pozastaví proces.</h3>
   <input type="file" id="fileInput" accept="application/pdf"/>
   
   <div id="progress-container">
     <div id="progress-bar"></div>
   </div>
   <div id="progress-text">Čekám na soubor...</div>
+  <div id="char-stats">Nerozpoznáno znaků: 0</div>
+  <div id="char-text">Nerozpoznané znaky jsou ve výsledném souboru vynechány.</div>
 
   <button id="downloadBtn" style="display:none; padding:10px 20px;">Stáhnout PDF</button>
 
   <script>
     const progressBar = document.getElementById('progress-bar');
     const progressText = document.getElementById('progress-text');
+    const charStats = document.getElementById('char-stats');
     const downloadBtn = document.getElementById('downloadBtn');
+
     let finalPdfBytes = null;
+    let skippedChars = 0;
+
+    // Normalizační funkce s fallbackem
+    function normalizeText(str) {
+      const replacements = {
+        "\uFB00": "ff", "\uFB01": "fi", "\uFB02": "fl",
+        "\uFB03": "ffi", "\uFB04": "ffl", "\uFB05": "ft", "\uFB06": "st",
+        "\u2018": "'", "\u2019": "'", "\u201C": '"', "\u201D": '"',
+        "\u2013": "-", "\u2014": "--", "\u2026": "..."
+      };
+
+      return str.split("").map(ch => {
+        if (replacements[ch]) return replacements[ch];
+        if (ch.charCodeAt(0) >= 32 && ch.charCodeAt(0) <= 126) return ch;
+        skippedChars++;
+        updateCharStats();
+        return ""; // přeskočený znak
+      }).join("");
+    }
+
+    function updateCharStats() {
+      charStats.textContent = `Nerozpoznáno znaků: ${skippedChars}`;
+    }
 
     // Nastavení workeru pro pdf.js
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.worker.min.js';
@@ -45,6 +84,8 @@
 
       progressText.textContent = "Načítám PDF...";
       progressBar.style.width = "0%";
+      skippedChars = 0;
+      updateCharStats();
 
       const pdfData = new Uint8Array(await file.arrayBuffer());
       const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
@@ -69,6 +110,7 @@
               const percent = Math.round(((i-1) + m.progress) / pdf.numPages * 100);
               progressBar.style.width = percent + "%";
               progressText.textContent = `Stránka ${i}/${pdf.numPages} – ${percent}%`;
+              updateCharStats();
             }
           }
         });
@@ -80,13 +122,16 @@
         // Přidání neviditelného textu
         data.words.forEach(word => {
           const { x0, y0, x1, y1 } = word.bbox;
-          pagePdf.drawText(word.text, {
-            x: x0,
-            y: viewport.height - y1,
-            size: y1 - y0,
-            color: rgb(1,1,1),
-            opacity: 0
-          });
+          const text = normalizeText(word.text);
+          if (text.trim().length > 0) {
+            pagePdf.drawText(text, {
+              x: x0,
+              y: viewport.height - y1,
+              size: y1 - y0,
+              color: rgb(1,1,1),
+              opacity: 0
+            });
+          }
         });
       }
 
@@ -94,6 +139,7 @@
       downloadBtn.style.display = "inline-block";
       progressBar.style.width = "100%";
       progressText.textContent = "Hotovo! PDF připraveno ke stažení.";
+      updateCharStats();
     });
 
     downloadBtn.addEventListener('click', () => {
